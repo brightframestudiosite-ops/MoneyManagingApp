@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1d5c3f"><title>Malta Money Manager</title>
+<style>
+:root{--bg:#f2f4f2;--card:#fff;--ink:#14201a;--mut:#566860;--g:#1d5c3f;--on:#fff;--r:#b3261e;--a:#946000;--ln:#d6ddd8}
+@media(prefers-color-scheme:dark){:root{--bg:#0e1612;--card:#17221c;--ink:#e8f0eb;--mut:#9fb0a6;--g:#5fc08f;--on:#08140e;--r:#ff8a80;--a:#ffc04d;--ln:#2a3a31}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,sans-serif;padding-bottom:76px}
+main{max-width:720px;margin:0 auto;padding:16px}h1,h2{margin:.2em 0}h2{font-size:1.1rem}
+.card{background:var(--card);border:1px solid var(--ln);border-radius:16px;padding:14px;margin:12px 0}
+.big{font-size:1.9rem;font-weight:700}.pos{color:var(--g)}.neg{color:var(--r)}.mut{color:var(--mut);font-size:.9rem}
+.row{display:flex;justify-content:space-between;gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--ln)}.row:last-child{border:0}
+input,select,button,textarea{font:inherit;min-height:44px;border-radius:12px;border:1px solid var(--ln);padding:8px 12px;background:var(--card);color:var(--ink);width:100%;margin:4px 0}
+button{background:var(--g);color:var(--on);border:0;font-weight:600;cursor:pointer}button.s{background:none;color:var(--g);border:1px solid var(--g)}button.d{background:none;color:var(--r);border:1px solid var(--r);width:auto;min-height:36px;padding:2px 10px}
+nav{position:fixed;bottom:0;left:0;right:0;display:flex;background:var(--card);border-top:1px solid var(--ln);padding-bottom:env(safe-area-inset-bottom)}
+nav button{background:none;color:var(--mut);border-radius:0;margin:0;border:0;font-size:.8rem}nav button.on{color:var(--g);box-shadow:inset 0 3px var(--g)}
+#msg{position:sticky;top:0;z-index:5;border-radius:12px;padding:0 12px}#msg.ok{background:var(--g);color:var(--on);padding:8px 12px}#msg.bad{background:var(--r);color:#fff;padding:8px 12px}
+.g2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+</style></head><body><main><div id="msg" role="status"></div><div id="app"></div></main><nav id="nav" hidden></nav>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.js"></script>
+<script>
+// ====== CONFIG: paste your Supabase Project URL and public anon/publishable key (never the service-role key) ======
+const SUPABASE_URL='https://sajwcthrnptffabvqevt.supabase.co', SUPABASE_KEY='sb_publishable_Ugagou1WYU6AuIpLDhmixg_QPF3MIr1';
+// ================================================================================================================
+const $=s=>document.querySelector(s);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const eur=c=>(c<0?'-':'')+'€'+(Math.abs(c)/100).toLocaleString('en-IE',{minimumFractionDigits:2,maximumFractionDigits:2});
+const cents=v=>{const n=Math.round(parseFloat(v)*100);return Number.isFinite(n)&&n>0&&n<1e10?n:null};
+const today=()=>new Date().toLocaleDateString('en-CA',{timeZone:'Europe/Malta'});
+const CATS=['Rent','Groceries','Electricity','Water','Internet','Gas','Household supplies','Cleaning products','Transport','Bus fares','Fuel','Shopping','Clothing','Eating out','Healthcare','Education','Entertainment','Subscriptions','Phone bills','Personal care','Travel','Gifts','Other'];
+let sb,me,D={},tab=localStorage.getItem('tab')||'home',ym=today().slice(0,7),cid=crypto.randomUUID(),pid=crypto.randomUUID();
+const app=$('#app');
+function msg(t,bad){const m=$('#msg');m.textContent=t;m.className=t?(bad?'bad':'ok'):'';if(t&&!bad)setTimeout(()=>{if(m.textContent===t)msg('')},3000)}
+const name=u=>(D.members.find(m=>m.user_id===u)||{}).display_name||'Unknown';
+async function guard(p,ok){try{const r=await p;if(r.error)throw r.error;if(ok)msg(ok);return r}catch(e){msg('Not saved: '+(e.message||e),true);return null}}
+
+async function init(){
+  if(!SUPABASE_URL||!SUPABASE_KEY){app.innerHTML='<div class="card"><h2>Setup needed</h2><p>Open index.html in a text editor and fill in SUPABASE_URL and SUPABASE_KEY near the top of the script. Then run setup.sql in Supabase. Nothing is connected yet.</p></div>';return}
+  sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+  sb.auth.onAuthStateChange((e,s)=>{if(e==='PASSWORD_RECOVERY')return recovery();me=s?.user||null;boot()});
+}
+function authView(){
+  $('#nav').hidden=true;
+  app.innerHTML=`<h1>Malta Money Manager</h1><div class="card"><label>Email<input id="em" type="email" autocomplete="email"></label><label>Password<input id="pw" type="password" autocomplete="current-password"></label>
+  <button onclick="signin()">Sign in</button><div class="g2"><button class="s" onclick="signup()">Create account</button><button class="s" onclick="reset()">Reset password</button></div>
+  <p class="mut">Use the email address your household owner invited.</p></div>`}
+async function signin(){msg('Signing in…');const r=await guard(sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value}));if(r)msg('')}
+async function signup(){if($('#pw').value.length<8)return msg('Password needs at least 8 characters.',true);await guard(sb.auth.signUp({email:$('#em').value.trim(),password:$('#pw').value}),'Account created. Check your email if confirmation is required, then sign in.')}
+async function reset(){const e=$('#em').value.trim();if(!e)return msg('Enter your email first.',true);await guard(sb.auth.resetPasswordForEmail(e,{redirectTo:location.href.split('#')[0]}),'Reset link sent.')}
+function recovery(){app.innerHTML='<div class="card"><h2>New password</h2><input id="np" type="password" placeholder="At least 8 characters"><button onclick="setpw()">Save password</button></div>'}
+async function setpw(){const p=$('#np').value;if(p.length<8)return msg('At least 8 characters.',true);if(await guard(sb.auth.updateUser({password:p}),'Password updated.'))boot()}
+
+async function boot(){
+  if(!me)return authView();
+  let r=await guard(sb.from('members').select('*'));if(!r)return;
+  if(!r.data.length){await guard(sb.rpc('claim_invites'));r=await guard(sb.from('members').select('*'));if(!r)return}
+  if(!r.data.length){$('#nav').hidden=true;app.innerHTML=`<div class="card"><h2>Create your household</h2><p class="mut">If you were invited, sign out and use the invited email instead.</p><input id="hn" placeholder="Household name"><input id="dn" placeholder="Your display name"><button onclick="mk()">Create household</button><button class="s" onclick="sb.auth.signOut()">Sign out</button></div>`;return}
+  D.members=r.data;D.hid=r.data[0].household_id;D.owner=r.data.some(m=>m.user_id===me.id&&m.role==='owner');
+  await load();
+  if(!D.ch)D.ch=sb.channel('hh').on('postgres_changes',{event:'*',schema:'public'},()=>load()).subscribe(s=>{if(s==='CHANNEL_ERROR')msg('Live sync disconnected.',true)});
+}
+async function mk(){const n=$('#hn').value.trim(),d=$('#dn').value.trim();if(!n||!d)return msg('Enter both names.',true);if(await guard(sb.rpc('create_household',{p_name:n,p_display:d}),'Household created.'))boot()}
+async function load(){
+  const q=t=>sb.from(t).select('*').order('created_at',{ascending:false});
+  const [e,a,p,i,iv]=await Promise.all([q('expenses'),sb.from('allocations').select('*'),q('settlement_payments'),q('income'),sb.from('invites').select('*')]);
+  for(const x of[e,a,p,i])if(x.error)return msg('Could not load: '+x.error.message,true);
+  Object.assign(D,{ex:e.data,al:a.data,pay:p.data,inc:i.data,inv:iv.data||[]});render()}
+
+function balances(){ // owes[a][b] = amount a owes b
+  const o={};const add=(a,b,v)=>{(o[a]=o[a]||{})[b]=(o[a][b]||0)+v};
+  D.ex.filter(x=>x.shared).forEach(x=>D.al.filter(l=>l.expense_id===x.id&&l.user_id!==x.paid_by).forEach(l=>add(l.user_id,x.paid_by,l.share_cents)));
+  D.pay.forEach(p=>add(p.from_user,p.to_user,-p.amount_cents));
+  const out=[];D.members.forEach(m=>D.members.forEach(n=>{if(m.user_id<n.user_id){const v=((o[m.user_id]||{})[n.user_id]||0)-((o[n.user_id]||{})[m.user_id]||0);if(v>0)out.push([m.user_id,n.user_id,v]);if(v<0)out.push([n.user_id,m.user_id,-v])}}));return out}
+
+function render(){
+  const nav=$('#nav');nav.hidden=false;
+  nav.innerHTML=[['home','Home'],['tx','Expenses'],['shared','Shared'],['inc','Income'],['more','More']].map(([k,l])=>`<button class="${tab===k?'on':''}" onclick="go('${k}')">${l}</button>`).join('');
+  app.innerHTML=({home,tx,shared,inc,more})[tab]()}
+function go(t){tab=t;localStorage.setItem('tab',t);cid=crypto.randomUUID();render()}
+const mSel=()=>`<input type="month" value="${ym}" onchange="ym=this.value||ym;render()" aria-label="Month">`;
+const inM=d=>d.slice(0,7)===ym;
+
+function home(){
+  const ex=D.ex.filter(x=>inM(x.spent_on)),inc=D.inc.filter(x=>inM(x.received_on)&&x.received).reduce((s,x)=>s+x.amount_cents,0);
+  const mine=ex.filter(x=>x.paid_by===me.id).reduce((s,x)=>s+x.amount_cents,0);
+  const sh=ex.filter(x=>x.shared).reduce((s,x)=>s+x.amount_cents,0),pe=ex.filter(x=>!x.shared).reduce((s,x)=>s+x.amount_cents,0);
+  const myShare=ex.reduce((s,x)=>s+(x.shared?(D.al.find(l=>l.expense_id===x.id&&l.user_id===me.id)||{share_cents:0}).share_cents:(x.paid_by===me.id?x.amount_cents:0)),0);
+  const owed=balances().reduce((s,[a,b,v])=>s+(b===me.id?v:a===me.id?-v:0),0);
+  const cat={};ex.forEach(x=>cat[x.category]=(cat[x.category]||0)+x.amount_cents);
+  return `<h1>Home</h1>${mSel()}
+  <div class="card"><div class="mut">Your income received</div><div class="big pos">${eur(inc)}</div><div class="mut">Your share of spending ${eur(myShare)} · Estimated from recorded entries, not a bank balance.</div></div>
+  <div class="card"><div class="row"><span>Household shared expenses</span><b>${eur(sh)}</b></div><div class="row"><span>Personal expenses (visible to you)</span><b>${eur(pe)}</b></div><div class="row"><span>You paid in cash</span><b>${eur(mine)}</b></div>
+  <div class="row"><span>${owed>=0?'Others owe you':'You owe others'}</span><b class="${owed>=0?'pos':'neg'}">${eur(Math.abs(owed))}</b></div></div>
+  <div class="card"><h2>By category</h2>${Object.entries(cat).sort((a,b)=>b[1]-a[1]).map(([k,v])=>`<div class="row"><span>${esc(k)}</span><b>${eur(v)}</b></div>`).join('')||'<p class="mut">No expenses this month. Add one from Expenses.</p>'}</div>
+  <div class="card"><h2>Recent</h2>${D.ex.slice(0,5).map(exRow).join('')||'<p class="mut">Nothing yet.</p>'}</div>`}
+const exRow=x=>`<div class="row"><span>${esc(x.title)}<br><span class="mut">${x.spent_on} · ${esc(x.category)} · ${esc(name(x.paid_by))} paid · ${x.shared?'shared':'personal'}</span></span><span><b>${eur(x.amount_cents)}</b> <button class="d" onclick="delEx('${x.id}')" aria-label="Delete">✕</button></span></div>`;
+
+function tx(){
+  return `<h1>Expenses</h1>${mSel()}
+  <div class="card"><h2>Add expense</h2><input id="t" placeholder="Title"><input id="am" type="number" step="0.01" min="0.01" inputmode="decimal" placeholder="Amount €">
+  <select id="ct">${CATS.map(c=>`<option>${c}</option>`).join('')}</select><input id="dt" type="date" value="${today()}">
+  <select id="pb">${D.members.map(m=>`<option value="${m.user_id}" ${m.user_id===me.id?'selected':''}>${esc(m.display_name)} paid</option>`).join('')}</select>
+  <select id="pm"><option>Card</option><option>Cash</option><option>Bank transfer</option><option>Other</option></select>
+  <select id="sh" onchange="split()"><option value="0">Personal</option><option value="eq">Shared – equal split</option><option value="pc">Shared – percentages</option><option value="cu">Shared – custom amounts</option></select>
+  <div id="sp"></div><textarea id="nt" placeholder="Notes (optional)"></textarea><button id="sv" onclick="addEx()">Save expense</button></div>
+  <div class="card">${D.ex.filter(x=>inM(x.spent_on)).map(exRow).join('')||'<p class="mut">No expenses this month.</p>'}</div>`}
+function split(){const m=$('#sh').value;$('#sp').innerHTML=(m==='pc'||m==='cu')?D.members.map(x=>`<label>${esc(x.display_name)} ${m==='pc'?'%':'€'}<input class="al" data-u="${x.user_id}" type="number" step="0.01" min="0"></label>`).join(''):''}
+async function addEx(){
+  const t=$('#t').value.trim(),amt=cents($('#am').value),m=$('#sh').value,n=D.members.length;
+  if(!t)return msg('Enter a title.',true);if(!amt)return msg('Enter an amount above €0.',true);if(!$('#dt').value)return msg('Choose a date.',true);
+  let al=[];
+  if(m!=='0'){
+    if(m==='eq'){const b=Math.floor(amt/n),r=amt-b*n;al=D.members.map((x,i)=>({user_id:x.user_id,share_cents:b+(i<r?1:0)}))}
+    else{const v=[...document.querySelectorAll('.al')].map(i=>({u:i.dataset.u,n:parseFloat(i.value)||0}));
+      if(m==='pc'){if(Math.abs(v.reduce((s,x)=>s+x.n,0)-100)>1e-9)return msg('Percentages must total exactly 100.',true);let used=0;al=v.map((x,i)=>{const c=i<n-1?Math.round(amt*x.n/100):amt-used;used+=c;return{user_id:x.u,share_cents:c}})}
+      else{al=v.map(x=>({user_id:x.u,share_cents:Math.round(x.n*100)}));if(al.reduce((s,x)=>s+x.share_cents,0)!==amt)return msg('Custom amounts must total '+eur(amt)+'.',true)}
+      if(al.some(x=>x.share_cents<0))return msg('Shares cannot be negative.',true)}}
+  $('#sv').disabled=true;msg('Saving…');
+  const r=await guard(sb.rpc('add_expense',{p_household:D.hid,p_client_id:cid,p_title:t,p_amount:amt,p_category:$('#ct').value,p_date:$('#dt').value,p_paid_by:$('#pb').value,p_shared:m!=='0',p_method:$('#pm').value,p_notes:$('#nt').value,p_alloc:al}),'Expense saved.');
+  if(r){cid=crypto.randomUUID();await load()}else{const b=$('#sv');if(b)b.disabled=false}}
+async function delEx(id){if(!confirm('Delete this expense? Its shares and balances will be removed too.'))return;if(await guard(sb.from('expenses').delete().eq('id',id),'Deleted.'))load()}
+
+function shared(){
+  const b=balances();
+  return `<h1>Shared</h1><div class="card"><h2>Who owes whom</h2>${b.map(([a,c,v])=>`<div class="row"><span>${esc(name(a))} owes ${esc(name(c))}</span><b class="neg">${eur(v)}</b></div>`).join('')||'<p class="mut">All settled up.</p>'}</div>
+  <div class="card"><h2>Record a repayment</h2><select id="pf">${D.members.map(m=>`<option value="${m.user_id}" ${m.user_id===me.id?'selected':''}>${esc(m.display_name)} paid</option>`).join('')}</select>
+  <select id="pt">${D.members.map(m=>`<option value="${m.user_id}">to ${esc(m.display_name)}</option>`).join('')}</select><input id="pa" type="number" step="0.01" min="0.01" placeholder="Amount €"><input id="pn" placeholder="Note (optional)">
+  <button onclick="repay()">Save repayment</button><p class="mut">Repayments reduce what is owed. They are not counted as expenses or income. You can record only repayments you are part of.</p></div>
+  <div class="card"><h2>History</h2>${D.pay.map(p=>`<div class="row"><span>${esc(name(p.from_user))} → ${esc(name(p.to_user))}<br><span class="mut">${p.paid_on} ${esc(p.note||'')}</span></span><span><b>${eur(p.amount_cents)}</b> <button class="d" onclick="delPay('${p.id}')">✕</button></span></div>`).join('')||'<p class="mut">No repayments yet.</p>'}</div>`}
+async function repay(){const f=$('#pf').value,t=$('#pt').value,a=cents($('#pa').value);
+  if(f===t)return msg('Choose two different people.',true);if(!a)return msg('Enter an amount above €0.',true);if(f!==me.id&&t!==me.id)return msg('You can only record repayments involving you.',true);
+  const r=await guard(sb.from('settlement_payments').insert({household_id:D.hid,client_id:pid,from_user:f,to_user:t,amount_cents:a,paid_on:today(),note:$('#pn').value||null}),'Repayment saved.');if(r){pid=crypto.randomUUID();load()}}
+async function delPay(id){if(confirm('Delete this repayment?')&&await guard(sb.from('settlement_payments').delete().eq('id',id),'Deleted.'))load()}
+
+function inc(){
+  return `<h1>Income</h1><p class="mut">Only you can see your income.</p>${mSel()}<div class="card"><input id="ia" type="number" step="0.01" min="0.01" placeholder="Amount €"><select id="ik"><option>Salary</option><option>Additional</option><option>Freelance</option><option>Bonus</option><option>Other</option></select>
+  <input id="id" type="date" value="${today()}"><select id="ir"><option value="1">Received</option><option value="0">Expected</option></select><input id="in" placeholder="Notes (optional)"><button onclick="addInc()">Save income</button></div>
+  <div class="card">${D.inc.filter(x=>inM(x.received_on)).map(x=>`<div class="row"><span>${esc(x.kind)} · ${x.received_on}<br><span class="mut">${x.received?'Received':'Expected (not counted)'} ${esc(x.notes||'')}</span></span><span><b>${eur(x.amount_cents)}</b> <button class="d" onclick="delInc('${x.id}')">✕</button></span></div>`).join('')||'<p class="mut">No income this month.</p>'}</div>`}
+async function addInc(){const a=cents($('#ia').value);if(!a)return msg('Enter an amount above €0.',true);if(!$('#id').value)return msg('Choose a date.',true);
+  if(await guard(sb.from('income').insert({household_id:D.hid,amount_cents:a,kind:$('#ik').value,received_on:$('#id').value,received:$('#ir').value==='1',notes:$('#in').value||null}),'Income saved.'))load()}
+async function delInc(id){if(confirm('Delete this income record?')&&await guard(sb.from('income').delete().eq('id',id),'Deleted.'))load()}
+
+function more(){
+  return `<h1>More</h1><div class="card"><h2>Account</h2><p>${esc(me.email)}</p><button onclick="sb.auth.signOut()">Sign out</button></div>
+  <div class="card"><h2>Members</h2>${D.members.map(m=>`<div class="row"><span>${esc(m.display_name)} <span class="mut">${m.role}</span></span>${D.owner&&m.user_id!==me.id?`<button class="d" onclick="rmMember('${m.user_id}')">Remove</button>`:''}</div>`).join('')}
+  ${D.inv.map(i=>`<div class="row"><span>${esc(i.display_name)} <span class="mut">invited: ${esc(i.email)}</span></span><button class="d" onclick="rmInv('${esc(i.email)}')">Cancel</button></div>`).join('')}</div>
+  ${D.owner?`<div class="card"><h2>Invite a member</h2><input id="ie" type="email" placeholder="Their email"><input id="idn" placeholder="Display name"><button onclick="invite()">Invite</button><p class="mut">They sign up with this exact email and are added automatically.</p></div>`:''}
+  <div class="card"><button class="s" onclick="csv()">Export expenses (CSV)</button></div>`}
+async function invite(){const e=$('#ie').value.trim().toLowerCase(),n=$('#idn').value.trim();if(!/^\S+@\S+\.\S+$/.test(e)||!n)return msg('Enter a valid email and a name.',true);if(D.members.length+D.inv.length>=3)return msg('This household is limited to three people.',true);
+  if(await guard(sb.from('invites').insert({household_id:D.hid,email:e,display_name:n}),'Invitation saved.'))load()}
+async function rmInv(e){if(await guard(sb.from('invites').delete().eq('household_id',D.hid).eq('email',e)))load()}
+async function rmMember(u){if(confirm('Remove this member from the household?')&&await guard(sb.from('members').delete().eq('household_id',D.hid).eq('user_id',u),'Removed.'))boot()}
+function csv(){const q=v=>'"'+String(v??'').replace(/"/g,'""').replace(/^([=+\-@])/,"'$1")+'"';
+  const rows=[['Date','Title','Category','Amount EUR','Paid by','Type','Method','Notes'],...D.ex.filter(x=>inM(x.spent_on)).map(x=>[x.spent_on,x.title,x.category,(x.amount_cents/100).toFixed(2),name(x.paid_by),x.shared?'Shared':'Personal',x.method,x.notes])];
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([rows.map(r=>r.map(q).join(',')).join('\n')],{type:'text/csv'}));a.download=`expenses-${ym}.csv`;a.click()}
+init();
+</script></body></html>
